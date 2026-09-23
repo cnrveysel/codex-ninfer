@@ -92,3 +92,26 @@ CHANGELOG.ignore.md
 # Python bytecode files
 __pycache__/
 *.pyc
+
+# local scratch, backups and stale test artifacts
+*.before-*
+*.snap.new
+arg0src*
+.Count - 1)*
+
+# local model weights
+*.gguf
+*.safetensors
+
+# local build/tooling caches
+.ruff_cache/
+
+# local profiles, secrets and state (never commit personal config)
+.codex-ninfer/
+.codex-lmstudio/
+.codex-openai/
+.codex-openrouter/
+*.env.local
+
+# alternate local cargo target directories
+target-*/
