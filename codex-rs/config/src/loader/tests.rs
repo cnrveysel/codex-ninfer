@@ -63,10 +63,17 @@ impl ExecutorFileSystem for TestFileSystem {
 
     async fn get_metadata(
         &self,
-        _path: &AbsolutePathBuf,
+        path: &AbsolutePathBuf,
         _sandbox: Option<&FileSystemSandboxContext>,
     ) -> FileSystemResult<FileMetadata> {
-        unimplemented!("test filesystem only supports reads")
+        let metadata = tokio::fs::symlink_metadata(path.as_path()).await?;
+        Ok(FileMetadata {
+            is_directory: metadata.is_dir(),
+            is_file: metadata.is_file(),
+            is_symlink: metadata.file_type().is_symlink(),
+            created_at_ms: 0,
+            modified_at_ms: 0,
+        })
     }
 
     async fn read_directory(
@@ -95,6 +102,96 @@ impl ExecutorFileSystem for TestFileSystem {
     ) -> FileSystemResult<()> {
         unimplemented!("test filesystem only supports reads")
     }
+}
+
+#[tokio::test]
+async fn custom_codex_home_does_not_load_default_home_config_as_project_config() -> io::Result<()> {
+    let tmp = tempdir()?;
+    let home = tmp.path().join("Users").join("Veysel");
+    let cwd = home.join("Desktop").join("some-folder");
+    let project_config_dir = cwd.join(".codex");
+    let default_user_codex_home = home.join(".codex");
+    let custom_codex_home = home.join(".codex-ninfer");
+    tokio::fs::create_dir_all(&project_config_dir).await?;
+    tokio::fs::create_dir_all(&default_user_codex_home).await?;
+    tokio::fs::create_dir_all(&custom_codex_home).await?;
+    tokio::fs::write(home.join(".git"), "gitdir: here").await?;
+    tokio::fs::write(
+        default_user_codex_home.join(CONFIG_TOML_FILE),
+        "model = \"gpt-6-sol\"\nnotify = [\"unexpected\"]\n",
+    )
+    .await?;
+    tokio::fs::write(
+        custom_codex_home.join(CONFIG_TOML_FILE),
+        "model = \"qwen3.8-27b\"\nmodel_reasoning_effort = \"none\"\n",
+    )
+    .await?;
+    tokio::fs::write(
+        project_config_dir.join(CONFIG_TOML_FILE),
+        "web_search = \"disabled\"\n",
+    )
+    .await?;
+
+    let home_abs = AbsolutePathBuf::from_absolute_path(&home)?;
+    let cwd_abs = AbsolutePathBuf::from_absolute_path(&cwd)?;
+    let home_key = project_trust_key(&home);
+    let trust_context = ProjectTrustContext {
+        project_root: home_abs.clone(),
+        project_root_key: home_key.clone(),
+        project_root_lookup_keys: vec![home_key.clone()],
+        checkout_root: None,
+        repo_root: None,
+        repo_root_key: None,
+        repo_root_lookup_keys: None,
+        projects_trust: std::collections::HashMap::from([(home_key, TrustLevel::Trusted)]),
+        user_config_file: AbsolutePathBuf::from_absolute_path(
+            custom_codex_home.join(CONFIG_TOML_FILE),
+        )?,
+    };
+    let project_layers = load_project_layers(
+        &TestFileSystem,
+        &cwd_abs,
+        &home_abs,
+        &trust_context,
+        &custom_codex_home,
+        Some(&default_user_codex_home),
+        /*strict_config*/ false,
+    )
+    .await?;
+
+    let mut merged: TomlValue =
+        toml::from_str(&tokio::fs::read_to_string(custom_codex_home.join(CONFIG_TOML_FILE)).await?)
+            .expect("parse custom user config");
+    for layer in &project_layers.layers {
+        merge_toml_values(&mut merged, &layer.config);
+    }
+    assert_eq!(
+        project_layers
+            .layers
+            .iter()
+            .map(|layer| layer.name.clone())
+            .collect::<Vec<_>>(),
+        vec![ConfigLayerSource::Project {
+            dot_codex_folder: AbsolutePathBuf::from_absolute_path(project_config_dir)?,
+        }]
+    );
+    assert_eq!(project_layers.startup_warnings, Vec::<String>::new());
+    assert_eq!(
+        merged.get("model").and_then(TomlValue::as_str),
+        Some("qwen3.8-27b")
+    );
+    assert_eq!(
+        merged
+            .get("model_reasoning_effort")
+            .and_then(TomlValue::as_str),
+        Some("none")
+    );
+    assert_eq!(merged.get("notify"), None);
+    assert_eq!(
+        merged.get("web_search").and_then(TomlValue::as_str),
+        Some("disabled")
+    );
+    Ok(())
 }
 
 #[tokio::test]

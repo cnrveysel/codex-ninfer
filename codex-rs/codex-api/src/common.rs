@@ -176,6 +176,8 @@ pub struct ResponsesApiRequest {
     pub tool_choice: String,
     pub parallel_tool_calls: bool,
     pub reasoning: Option<Reasoning>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u64>,
     pub store: bool,
     pub stream: bool,
     pub include: Vec<String>,
@@ -200,6 +202,7 @@ impl From<&ResponsesApiRequest> for ResponseCreateWsRequest {
             tool_choice: request.tool_choice.clone(),
             parallel_tool_calls: request.parallel_tool_calls,
             reasoning: request.reasoning.clone(),
+            max_output_tokens: request.max_output_tokens,
             store: request.store,
             stream: request.stream,
             include: request.include.clone(),
@@ -224,6 +227,8 @@ pub struct ResponseCreateWsRequest {
     pub tool_choice: String,
     pub parallel_tool_calls: bool,
     pub reasoning: Option<Reasoning>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u64>,
     pub store: bool,
     pub stream: bool,
     pub include: Vec<String>,

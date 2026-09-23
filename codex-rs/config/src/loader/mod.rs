@@ -310,12 +310,16 @@ pub async fn load_config_layers_state(
                 return Err(err);
             }
         };
+        let default_user_codex_home = AbsolutePathBuf::from_absolute_path_checked("~/.codex").ok();
         let project_layers = load_project_layers(
             fs,
             &cwd,
             &project_trust_context.project_root,
             &project_trust_context,
             codex_home,
+            default_user_codex_home
+                .as_ref()
+                .map(AbsolutePathBuf::as_path),
             strict_config,
         )
         .await?;
@@ -1136,11 +1140,14 @@ async fn load_project_layers(
     project_root: &AbsolutePathBuf,
     trust_context: &ProjectTrustContext,
     codex_home: &Path,
+    default_user_codex_home: Option<&Path>,
     strict_config: bool,
 ) -> io::Result<LoadedProjectLayers> {
     let codex_home_abs = AbsolutePathBuf::from_absolute_path(codex_home)?;
     let codex_home_normalized =
         normalize_path(codex_home_abs.as_path()).unwrap_or_else(|_| codex_home_abs.to_path_buf());
+    let default_user_codex_home_normalized = default_user_codex_home
+        .map(|path| normalize_path(path).unwrap_or_else(|_| path.to_path_buf()));
     let mut dirs = cwd
         .ancestors()
         .scan(false, |done, a| {
@@ -1174,7 +1181,12 @@ async fn load_project_layers(
         let hooks_config_folder_override = trust_context.root_checkout_hooks_folder_for_dir(&dir);
         let dot_codex_normalized =
             normalize_path(dot_codex_abs.as_path()).unwrap_or_else(|_| dot_codex_abs.to_path_buf());
-        if dot_codex_abs == codex_home_abs || dot_codex_normalized == codex_home_normalized {
+        // The default ~/.codex is a user config directory even when CODEX_HOME
+        // points elsewhere and an ancestor (such as the home folder) is a project root.
+        if dot_codex_abs == codex_home_abs
+            || dot_codex_normalized == codex_home_normalized
+            || default_user_codex_home_normalized.as_ref() == Some(&dot_codex_normalized)
+        {
             continue;
         }
         let config_file = dot_codex_abs.join(CONFIG_TOML_FILE);

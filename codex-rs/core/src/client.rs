@@ -145,6 +145,7 @@ const X_CODEX_WS_STREAM_REQUEST_START_MS_CLIENT_METADATA_KEY: &str =
     "x-codex-ws-stream-request-start-ms";
 const RESPONSES_WEBSOCKETS_V2_BETA_HEADER_VALUE: &str = "responses_websockets=2026-02-06";
 const RESPONSES_ENDPOINT: &str = "/responses";
+const NINFER_QWEN_MEDIUM_MAX_OUTPUT_TOKENS: i64 = 16_384;
 const RESPONSES_COMPACT_ENDPOINT: &str = "/responses/compact";
 // `/responses/compact` is unary, so the timeout covers the full response rather than one idle
 // period between stream events.
@@ -720,6 +721,13 @@ impl ModelClient {
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
     ) -> Option<Reasoning> {
+        if model_info.slug == "qwen3.8-27b" {
+            return Some(Reasoning {
+                effort: effort.or(model_info.default_reasoning_level),
+                summary: None,
+            });
+        }
+
         if model_info.supports_reasoning_summaries {
             Some(Reasoning {
                 effort: effort.or(model_info.default_reasoning_level),
@@ -744,14 +752,31 @@ impl ModelClient {
         service_tier: Option<String>,
     ) -> Result<ResponsesApiRequest> {
         let instructions = &prompt.base_instructions.text;
-        let input = prompt.get_formatted_input();
+        let mut input = prompt.get_formatted_input();
+
+        input.retain(|item| !matches!(item, ResponseItem::Reasoning { .. }));
+
         let tools = create_tools_json_for_responses_api(&prompt.tools)?;
         let reasoning = Self::build_reasoning(model_info, effort, summary);
-        let include = if reasoning.is_some() {
-            vec!["reasoning.encrypted_content".to_string()]
+        let max_output_tokens = if provider.name == "NInfer LAN"
+            && model_info.slug == "qwen3.8-27b"
+            && reasoning.as_ref().and_then(|reasoning| reasoning.effort)
+                == Some(ReasoningEffortConfig::Medium)
+        {
+            model_info
+                .resolved_context_window()
+                .zip(model_info.auto_compact_token_limit())
+                .map(|(context_window, input_limit)| {
+                    context_window
+                        .saturating_sub(input_limit)
+                        .min(NINFER_QWEN_MEDIUM_MAX_OUTPUT_TOKENS)
+                })
+                .and_then(|tokens| u64::try_from(tokens).ok())
+                .filter(|tokens| *tokens > 0)
         } else {
-            Vec::new()
+            None
         };
+        let include = Vec::new();
         let verbosity = if model_info.support_verbosity {
             self.state.model_verbosity.or(model_info.default_verbosity)
         } else {
@@ -776,8 +801,9 @@ impl ModelClient {
             input,
             tools,
             tool_choice: "auto".to_string(),
-            parallel_tool_calls: prompt.parallel_tool_calls,
+            parallel_tool_calls: true,
             reasoning,
+            max_output_tokens,
             store: provider.is_azure_responses_endpoint(),
             stream: true,
             include,

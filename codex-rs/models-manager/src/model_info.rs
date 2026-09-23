@@ -4,6 +4,8 @@ use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelInstructionsVariables;
 use codex_protocol::openai_models::ModelMessages;
 use codex_protocol::openai_models::ModelVisibility;
+use codex_protocol::openai_models::ReasoningEffort;
+use codex_protocol::openai_models::ReasoningEffortPreset;
 use codex_protocol::openai_models::TruncationMode;
 use codex_protocol::openai_models::TruncationPolicyConfig;
 use codex_protocol::openai_models::WebSearchToolType;
@@ -64,8 +66,13 @@ pub fn with_config_overrides(mut model: ModelInfo, config: &ModelsManagerConfig)
 
 /// Build a minimal fallback model descriptor for missing/unknown slugs.
 pub fn model_info_from_slug(slug: &str) -> ModelInfo {
-    warn!("Unknown model {slug} is used. This will use fallback model metadata.");
-    ModelInfo {
+    let is_ninfer_qwen = slug == "qwen3.8-27b";
+
+    if !is_ninfer_qwen {
+        warn!("Unknown model {slug} is used. This will use fallback model metadata.");
+    }
+
+    let mut model_info = ModelInfo {
         slug: slug.to_string(),
         display_name: slug.to_string(),
         description: None,
@@ -97,12 +104,45 @@ pub fn model_info_from_slug(slug: &str) -> ModelInfo {
         effective_context_window_percent: 95,
         experimental_supported_tools: Vec::new(),
         input_modalities: default_input_modalities(),
-        used_fallback_model_metadata: true, // this is the fallback model metadata
+        used_fallback_model_metadata: !is_ninfer_qwen,
         supports_search_tool: false,
         auto_review_model_override: None,
         tool_mode: None,
         multi_agent_version: None,
+    };
+
+    if is_ninfer_qwen {
+        model_info.display_name = "Qwen3.8 27B (NInfer)".to_string();
+
+        model_info.default_reasoning_level = Some(ReasoningEffort::Medium);
+
+        model_info.supported_reasoning_levels = vec![
+            ReasoningEffortPreset {
+                effort: ReasoningEffort::None,
+                description: ReasoningEffort::None.to_string(),
+            },
+            ReasoningEffortPreset {
+                effort: ReasoningEffort::Low,
+                description: ReasoningEffort::Low.to_string(),
+            },
+            ReasoningEffortPreset {
+                effort: ReasoningEffort::Medium,
+                description: ReasoningEffort::Medium.to_string(),
+            },
+            ReasoningEffortPreset {
+                effort: ReasoningEffort::XHigh,
+                description: ReasoningEffort::XHigh.to_string(),
+            },
+        ];
+
+        model_info.supports_parallel_tool_calls = true;
+
+        model_info.context_window = Some(262_144);
+        model_info.max_context_window = Some(262_144);
+        model_info.effective_context_window_percent = 100;
     }
+
+    model_info
 }
 
 fn local_personality_messages_for_slug(slug: &str) -> Option<ModelMessages> {

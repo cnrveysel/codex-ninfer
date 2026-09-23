@@ -23,9 +23,11 @@ use codex_model_provider_info::create_oss_provider_with_base_url;
 use codex_otel::SessionTelemetry;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
+use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ModelInfo;
+use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::InternalSessionSource;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
@@ -114,6 +116,83 @@ fn test_model_info() -> ModelInfo {
         "experimental_supported_tools": []
     }))
     .expect("deserialize test model info")
+}
+
+#[test]
+fn ninfer_reasoning_effort_is_sent_without_summary() {
+    let mut model_info = test_model_info();
+    model_info.slug = "qwen3.8-27b".to_string();
+
+    let reasoning = ModelClient::build_reasoning(
+        &model_info,
+        Some(ReasoningEffort::None),
+        ReasoningSummary::Auto,
+    );
+
+    assert_eq!(
+        serde_json::to_value(reasoning).expect("reasoning should serialize"),
+        json!({"effort": "none"})
+    );
+}
+
+#[test]
+fn ninfer_qwen_medium_request_has_bounded_output_budget() {
+    let client = test_model_client(SessionSource::Cli);
+    let mut model_info = test_model_info();
+    model_info.slug = "qwen3.8-27b".to_string();
+    model_info.context_window = Some(262_144);
+    model_info.max_context_window = Some(262_144);
+    model_info.auto_compact_token_limit = Some(200_000);
+
+    let mut provider =
+        create_oss_provider_with_base_url("http://example.com/v1", WireApi::Responses)
+            .to_api_provider(/*auth_mode*/ None)
+            .expect("test provider");
+    provider.name = "NInfer LAN".to_string();
+
+    let build =
+        |model_info: &ModelInfo, provider: &codex_api::Provider, effort: ReasoningEffort| {
+            client
+                .build_responses_request(
+                    provider,
+                    &super::Prompt::default(),
+                    model_info,
+                    Some(effort),
+                    ReasoningSummary::Auto,
+                    /*service_tier*/ None,
+                )
+                .expect("response request")
+        };
+
+    let request = build(&model_info, &provider, ReasoningEffort::Medium);
+    let wire = serde_json::to_value(&request).expect("serialize request");
+    assert_eq!(wire["reasoning"], json!({"effort": "medium"}));
+    assert_eq!(wire["max_output_tokens"], json!(16_384));
+    assert_eq!(
+        serde_json::to_value(codex_api::ResponseCreateWsRequest::from(&request))
+            .expect("serialize websocket request")["max_output_tokens"],
+        json!(16_384)
+    );
+    assert!(200_000 + request.max_output_tokens.expect("output budget") as i64 <= 262_144);
+
+    let mut smaller_context = model_info.clone();
+    smaller_context.context_window = Some(100_000);
+    smaller_context.auto_compact_token_limit = Some(90_000);
+    let bounded = build(&smaller_context, &provider, ReasoningEffort::Medium);
+    assert_eq!(bounded.max_output_tokens, Some(10_000));
+
+    let mut other_model = model_info.clone();
+    other_model.slug = "other-model".to_string();
+    let other_model_wire =
+        serde_json::to_value(build(&other_model, &provider, ReasoningEffort::Medium))
+            .expect("serialize other model request");
+    assert!(other_model_wire.get("max_output_tokens").is_none());
+
+    provider.name = "LM Studio".to_string();
+    let other_provider_wire =
+        serde_json::to_value(build(&model_info, &provider, ReasoningEffort::Medium))
+            .expect("serialize other provider request");
+    assert!(other_provider_wire.get("max_output_tokens").is_none());
 }
 
 fn test_session_telemetry() -> SessionTelemetry {

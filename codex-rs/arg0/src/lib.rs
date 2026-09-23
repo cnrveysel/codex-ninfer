@@ -56,7 +56,7 @@ pub fn arg0_dispatch() -> Option<Arg0PathEntryGuard> {
     let mut args = std::env::args_os();
     let argv0 = args.next().unwrap_or_default();
     let exe_name = Path::new(&argv0)
-        .file_name()
+        .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("");
 
@@ -346,16 +346,10 @@ pub fn prepend_path_entry_for_codex_aliases() -> std::io::Result<Arg0PathEntryGu
 
         #[cfg(windows)]
         {
-            let batch_script = path.join(format!("{filename}.bat"));
-            let exe = exe.display();
-            std::fs::write(
-                &batch_script,
-                format!(
-                    r#"@echo off
-"{exe}" {CODEX_CORE_APPLY_PATCH_ARG1} %*
-"#,
-                ),
-            )?;
+            let alias_exe = path.join(format!("{filename}.exe"));
+            if std::fs::hard_link(&exe, &alias_exe).is_err() {
+                std::fs::copy(&exe, &alias_exe)?;
+            }
         }
     }
 

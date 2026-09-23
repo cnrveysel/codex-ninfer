@@ -17,8 +17,10 @@ use crate::tools::registry::PreToolUsePayload;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolTelemetryTags;
 use codex_mcp::ToolInfo;
+use codex_tools::JsonSchema;
 use codex_tools::ResponsesApiNamespace;
 use codex_tools::ResponsesApiNamespaceTool;
+use codex_tools::ResponsesApiTool;
 use codex_tools::ToolName;
 use codex_tools::ToolSearchInfo;
 use codex_tools::ToolSearchSourceInfo;
@@ -28,6 +30,10 @@ use serde_json::Map;
 use serde_json::Value;
 
 const LEGACY_MCP_TOOL_NAME_PREFIX: &str = "mcp__";
+const UNREAL_MCP_SERVER_NAME: &str = "unreal";
+const UNREAL_CALL_TOOL_NAME: &str = "call_tool";
+const UNREAL_CALL_TOOL_ARGUMENTS_JSON_DESCRIPTION: &str =
+    "Parameters for the selected Unreal tool, encoded as a JSON object string.";
 
 pub struct McpHandler {
     tool_info: ToolInfo,
@@ -126,6 +132,7 @@ impl ToolExecutor<ToolInvocation> for McpHandler {
         };
 
         let started = Instant::now();
+        let payload = bridge_unreal_call_tool_arguments(&self.tool_info, payload)?;
         let result = handle_mcp_tool_call(
             Arc::clone(&session),
             &turn,
@@ -216,7 +223,8 @@ impl CoreToolRuntime for McpHandler {
 
 fn create_tool_spec(tool_info: &ToolInfo) -> Result<ToolSpec, serde_json::Error> {
     let tool_name = tool_info.canonical_tool_name();
-    let tool = mcp_tool_to_responses_api_tool(&tool_name, &tool_info.tool)?;
+    let mut tool = mcp_tool_to_responses_api_tool(&tool_name, &tool_info.tool)?;
+    bridge_unreal_call_tool_schema(tool_info, &mut tool);
     let description = tool_info
         .namespace_description
         .as_deref()
@@ -238,6 +246,75 @@ fn create_tool_spec(tool_info: &ToolInfo) -> Result<ToolSpec, serde_json::Error>
         description,
         tools: vec![ResponsesApiNamespaceTool::Function(tool)],
     }))
+}
+
+fn is_unreal_call_tool(tool_info: &ToolInfo) -> bool {
+    tool_info.server_name == UNREAL_MCP_SERVER_NAME && tool_info.tool.name == UNREAL_CALL_TOOL_NAME
+}
+
+fn bridge_unreal_call_tool_schema(tool_info: &ToolInfo, tool: &mut ResponsesApiTool) {
+    if !is_unreal_call_tool(tool_info) {
+        return;
+    }
+
+    let properties = tool.parameters.properties.get_or_insert_default();
+    properties.remove("arguments");
+    properties.insert(
+        "arguments_json".to_string(),
+        JsonSchema::string(Some(
+            UNREAL_CALL_TOOL_ARGUMENTS_JSON_DESCRIPTION.to_string(),
+        )),
+    );
+
+    if let Some(required) = &mut tool.parameters.required {
+        for property in required {
+            if property == "arguments" {
+                *property = "arguments_json".to_string();
+            }
+        }
+    }
+}
+
+fn bridge_unreal_call_tool_arguments(
+    tool_info: &ToolInfo,
+    arguments: String,
+) -> Result<String, FunctionCallError> {
+    if !is_unreal_call_tool(tool_info) {
+        return Ok(arguments);
+    }
+
+    let mut arguments_object =
+        serde_json::from_str::<Map<String, Value>>(&arguments).map_err(|err| {
+            FunctionCallError::RespondToModel(format!(
+                "failed to parse Unreal call_tool arguments as a JSON object: {err}"
+            ))
+        })?;
+    let Some(arguments_json) = arguments_object.get("arguments_json").cloned() else {
+        return Ok(arguments);
+    };
+    let Value::String(arguments_json) = arguments_json else {
+        return Err(FunctionCallError::RespondToModel(
+            "Unreal call_tool arguments_json must be a string containing a JSON object".to_string(),
+        ));
+    };
+    let arguments_value = serde_json::from_str::<Value>(&arguments_json).map_err(|err| {
+        FunctionCallError::RespondToModel(format!(
+            "failed to parse Unreal call_tool arguments_json as JSON: {err}"
+        ))
+    })?;
+    if !arguments_value.is_object() {
+        return Err(FunctionCallError::RespondToModel(
+            "Unreal call_tool arguments_json must decode to a JSON object".to_string(),
+        ));
+    }
+
+    arguments_object.remove("arguments_json");
+    arguments_object.insert("arguments".to_string(), arguments_value);
+    serde_json::to_string(&arguments_object).map_err(|err| {
+        FunctionCallError::RespondToModel(format!(
+            "failed to serialize bridged Unreal call_tool arguments: {err}"
+        ))
+    })
 }
 
 fn mcp_hook_tool_input(raw_arguments: &str) -> Value {
@@ -468,6 +545,138 @@ mod tests {
     }
 
     #[test]
+    fn bridge_unreal_call_tool_schema_uses_arguments_json_string() {
+        let handler =
+            McpHandler::new(call_tool_info("unreal")).expect("Unreal call_tool spec should build");
+        let ToolSpec::Namespace(namespace) = handler.spec() else {
+            panic!("MCP tool spec should be a namespace");
+        };
+        let [ResponsesApiNamespaceTool::Function(tool)] = namespace.tools.as_slice() else {
+            panic!("MCP namespace should contain one function");
+        };
+
+        assert_eq!(
+            serde_json::to_value(&tool.parameters).expect("schema should serialize"),
+            json!({
+                "type": "object",
+                "properties": {
+                    "toolset_name": {
+                        "type": "string",
+                        "description": "Unreal toolset name"
+                    },
+                    "tool_name": {
+                        "type": "string",
+                        "description": "Unreal tool name"
+                    },
+                    "arguments_json": {
+                        "type": "string",
+                        "description": UNREAL_CALL_TOOL_ARGUMENTS_JSON_DESCRIPTION
+                    }
+                },
+                "required": ["toolset_name", "tool_name", "arguments_json"]
+            })
+        );
+    }
+
+    #[test]
+    fn bridge_unreal_call_tool_arguments_json_to_object_and_keeps_legacy_arguments() {
+        let tool_info = call_tool_info("unreal");
+        let bridged = bridge_unreal_call_tool_arguments(
+            &tool_info,
+            json!({
+                "toolset_name": "LevelEditor",
+                "tool_name": "spawn_actor",
+                "arguments_json": r#"{"class_name":"PointLight","location":[1,2,3]}"#
+            })
+            .to_string(),
+        )
+        .expect("valid arguments_json should be bridged");
+        assert_eq!(
+            serde_json::from_str::<Value>(&bridged).expect("bridged arguments should be JSON"),
+            json!({
+                "toolset_name": "LevelEditor",
+                "tool_name": "spawn_actor",
+                "arguments": {
+                    "class_name": "PointLight",
+                    "location": [1, 2, 3]
+                }
+            })
+        );
+
+        let legacy =
+            r#"{ "toolset_name": "LevelEditor", "tool_name": "spawn_actor", "arguments": {} }"#
+                .to_string();
+        assert_eq!(
+            bridge_unreal_call_tool_arguments(&tool_info, legacy.clone()),
+            Ok(legacy)
+        );
+    }
+
+    #[test]
+    fn bridge_unreal_call_tool_invalid_arguments_json_responds_to_model() {
+        let invalid_arguments_json = "{";
+        let parse_error = serde_json::from_str::<Value>(invalid_arguments_json)
+            .expect_err("test input should be invalid JSON");
+
+        assert_eq!(
+            bridge_unreal_call_tool_arguments(
+                &call_tool_info("unreal"),
+                json!({
+                    "toolset_name": "LevelEditor",
+                    "tool_name": "spawn_actor",
+                    "arguments_json": invalid_arguments_json
+                })
+                .to_string(),
+            ),
+            Err(FunctionCallError::RespondToModel(format!(
+                "failed to parse Unreal call_tool arguments_json as JSON: {parse_error}"
+            )))
+        );
+    }
+
+    #[test]
+    fn bridge_unreal_call_tool_leaves_other_servers_unchanged() {
+        let tool_info = call_tool_info("blender");
+        let handler =
+            McpHandler::new(tool_info.clone()).expect("Blender call_tool spec should build");
+        let ToolSpec::Namespace(namespace) = handler.spec() else {
+            panic!("MCP tool spec should be a namespace");
+        };
+        let [ResponsesApiNamespaceTool::Function(tool)] = namespace.tools.as_slice() else {
+            panic!("MCP namespace should contain one function");
+        };
+        assert_eq!(
+            serde_json::to_value(&tool.parameters).expect("schema should serialize"),
+            json!({
+                "type": "object",
+                "properties": {
+                    "toolset_name": {
+                        "type": "string",
+                        "description": "Unreal toolset name"
+                    },
+                    "tool_name": {
+                        "type": "string",
+                        "description": "Unreal tool name"
+                    },
+                    "arguments": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": true
+                    }
+                },
+                "required": ["toolset_name", "tool_name", "arguments"]
+            })
+        );
+
+        let original = r#"{ "toolset_name": "Modeling", "tool_name": "extrude", "arguments": {} }"#
+            .to_string();
+        assert_eq!(
+            bridge_unreal_call_tool_arguments(&tool_info, original.clone()),
+            Ok(original)
+        );
+    }
+
+    #[test]
     fn mcp_read_only_hint_supports_parallel_calls_without_server_opt_in() {
         let mut read_only_info = tool_info("foo", "mcp__foo__", "read");
         read_only_info.tool.annotations = Some(rmcp::model::ToolAnnotations::new().read_only(true));
@@ -506,6 +715,47 @@ mod tests {
     }
 
     fn tool_info(server_name: &str, callable_namespace: &str, tool_name: &str) -> ToolInfo {
+        tool_info_with_input_schema(
+            server_name,
+            callable_namespace,
+            tool_name,
+            json!({ "type": "object" }),
+        )
+    }
+
+    fn call_tool_info(server_name: &str) -> ToolInfo {
+        tool_info_with_input_schema(
+            server_name,
+            server_name,
+            UNREAL_CALL_TOOL_NAME,
+            json!({
+                "type": "object",
+                "properties": {
+                    "toolset_name": {
+                        "type": "string",
+                        "description": "Unreal toolset name"
+                    },
+                    "tool_name": {
+                        "type": "string",
+                        "description": "Unreal tool name"
+                    },
+                    "arguments": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": true
+                    }
+                },
+                "required": ["toolset_name", "tool_name", "arguments"]
+            }),
+        )
+    }
+
+    fn tool_info_with_input_schema(
+        server_name: &str,
+        callable_namespace: &str,
+        tool_name: &str,
+        input_schema: Value,
+    ) -> ToolInfo {
         ToolInfo {
             server_name: server_name.to_string(),
             supports_parallel_tool_calls: false,
@@ -516,9 +766,7 @@ mod tests {
             tool: rmcp::model::Tool::new_with_raw(
                 tool_name.to_string(),
                 None,
-                Arc::new(rmcp::model::object(serde_json::json!({
-                    "type": "object",
-                }))),
+                Arc::new(rmcp::model::object(input_schema)),
             ),
             connector_id: None,
             connector_name: None,
