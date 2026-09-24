@@ -54,6 +54,17 @@ The installer copies the three executables to
 folder to your user PATH. No administrator rights are needed.
 To remove the installation, double-click `Uninstall.cmd`.
 
+Notes:
+
+- The installer sets the `CODEX_HOME` user environment variable to
+  `%USERPROFILE%\.codex-ninfer`, so a plain `codex-ninfer` launch uses
+  the NInfer profile. Open a new terminal after installing.
+- The generated profile uses `web_search = "disabled"`, because NInfer
+  does not provide a native `web_search` executor. Tools the fork
+  supports, such as MCP tools, shell, and `apply_patch`, are not
+  affected.
+
+
 
 ## Building on Windows
 

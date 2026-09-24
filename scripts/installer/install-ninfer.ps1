@@ -3,14 +3,15 @@
 # Install mode (default):
 #   Copies the three Codex NInfer executables (which must sit next to this
 #   script in the release ZIP) to %LOCALAPPDATA%\CodexNInfer\bin, writes a
-#   starter CODEX_HOME config, and optionally adds the install folder to
-#   the user PATH. No administrator rights, Rust, Cargo, or Visual Studio
-#   are required.
+#   starter CODEX_HOME config, persists the CODEX_HOME user environment
+#   variable, and optionally adds the install folder to the user PATH.
+#   No administrator rights, Rust, Cargo, or Visual Studio are required.
 #
 # Uninstall mode:
 #   & install-ninfer.ps1 -Uninstall
-#   Removes the installed binaries and (on request) the user PATH entry
-#   and the %USERPROFILE%\.codex-ninfer profile.
+#   Removes the installed binaries, the user PATH entry (if present), the
+#   user CODEX_HOME variable (only if it points at this profile), and, on
+#   request, the %USERPROFILE%\.codex-ninfer profile.
 
 [CmdletBinding()]
 param(
@@ -70,8 +71,20 @@ if ($Uninstall) {
         Write-Host "  Removed empty folder $parent"
     }
 
-    Write-Step "[2/2] Cleaning up PATH and (optionally) your profile..."
+    Write-Step "[2/2] Cleaning up PATH, CODEX_HOME and (optionally) your profile..."
     Remove-PathEntry $installDir
+
+    # Only clear the user CODEX_HOME when it points at this installer
+    # profile; never touch a value that points somewhere else.
+    $userCodeHome = [Environment]::GetEnvironmentVariable("CODEX_HOME", "User")
+    if ($userCodeHome) {
+        if ($userCodeHome.Trim().TrimEnd('\') -ieq $codeHome.Trim().TrimEnd('\')) {
+            [Environment]::SetEnvironmentVariable("CODEX_HOME", $null, "User")
+            Write-Host "  Removed user CODEX_HOME (it pointed at $codeHome)."
+        } else {
+            Write-Host "  Kept user CODEX_HOME ($userCodeHome) because it points elsewhere."
+        }
+    }
 
     Write-Host ""
     $answer = Read-Host "Also remove $codeHome (configuration and session data)? [y/N]"
@@ -83,7 +96,7 @@ if ($Uninstall) {
 
     Write-Host ""
     Write-Host "  Uninstall finished."
-    Write-Host "  Note: PATH changes apply to new terminal windows."
+    Write-Host "  Note: PATH and environment changes apply to new terminal windows."
     return
 }
 
@@ -115,6 +128,23 @@ $codeHome = $codeHomeInput.Trim()
 New-Item -ItemType Directory -Force -Path $codeHome | Out-Null
 $configPath = Join-Path $codeHome "config.toml"
 
+# Persist CODEX_HOME for the user so plain codex-ninfer uses this profile.
+$env:CODEX_HOME = $codeHome
+$existingCodeHome = [Environment]::GetEnvironmentVariable("CODEX_HOME", "User")
+if ($existingCodeHome) {
+    Write-Host "  Existing CODEX_HOME detected: $existingCodeHome"
+    $answer = Read-Host "  Use $codeHome for Codex NInfer? [Y/n]"
+    if ($answer -notmatch '^[nN]') {
+        [Environment]::SetEnvironmentVariable("CODEX_HOME", $codeHome, "User")
+        Write-Host "  User CODEX_HOME set to: $codeHome"
+    } else {
+        Write-Host "  Kept your existing CODEX_HOME value."
+    }
+} else {
+    [Environment]::SetEnvironmentVariable("CODEX_HOME", $codeHome, "User")
+    Write-Host "  User CODEX_HOME set to: $codeHome"
+}
+
 # --- [3/4] Configure NInfer -------------------------------------------------
 Write-Step "[3/4] Configuring NInfer..."
 Write-Host "  Default endpoint: $defaultEndpoint (press Enter to accept)"
@@ -138,6 +168,7 @@ if ($writeConfig) {
         'reasoning_effort = "medium"   # none | low | medium | xhigh'
         'approval_policy = "on-request"'
         'sandbox_mode = "workspace-write"'
+        'web_search = "disabled"   # NInfer has no native web_search executor'
         ""
         "[model_providers.ninfer]"
         'name = "NInfer"'
@@ -181,14 +212,17 @@ Write-Host "===============================================" -ForegroundColor Gr
 Write-Host "  Installation complete!" -ForegroundColor Green
 Write-Host "==============================================="
 Write-Host ""
-Write-Host "  Binaries : $installDir"
-Write-Host "  Config   : $codeHome"
+Write-Host "  Binaries    : $installDir"
+Write-Host "  CODEX_HOME  : $codeHome"
+Write-Host "  Config      : $configPath"
 Write-Host ""
-Write-Host "  Open a NEW terminal window, then run:"
+Write-Host "  CODEX_HOME is configured. Open a new terminal before"
+Write-Host "  running codex-ninfer (environment changes only apply to"
+Write-Host "  new terminal windows)."
+Write-Host ""
+Write-Host "  In the new terminal, run:"
 Write-Host ""
 Write-Host "      codex-ninfer"
-Write-Host ""
-Write-Host "  (PATH changes only apply to new terminal windows.)"
 Write-Host ""
 Write-Host "  To start Codex right now, run this instead:"
 Write-Host ""
