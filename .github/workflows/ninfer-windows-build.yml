@@ -21,14 +21,17 @@ jobs:
     name: Build Codex NInfer Windows package (${{ matrix.target }})
     runs-on: windows-latest
     timeout-minutes: 300
+
     defaults:
       run:
         shell: powershell
+
     strategy:
       fail-fast: false
       matrix:
         target:
           - x86_64-pc-windows-msvc
+
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -51,28 +54,28 @@ jobs:
         run: |
           Get-ChildItem "dist\codex-ninfer-windows-x64" | Format-Table Name, Length
 
-        - name: Create ZIP archive
-    shell: powershell
-    run: |
-      $ErrorActionPreference = "Stop"
+      - name: Create ZIP archive
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
 
-      $packageDir = Join-Path "${{ github.workspace }}" "dist\codex-ninfer-windows-x64"
-      $zipPath = Join-Path "${{ github.workspace }}" "dist\codex-ninfer-windows-x64.zip"
+          $packageDir = Join-Path "${{ github.workspace }}" "dist\codex-ninfer-windows-x64"
+          $zipPath = Join-Path "${{ github.workspace }}" "dist\codex-ninfer-windows-x64.zip"
 
-      if (-not (Test-Path $packageDir)) {
-        throw "Package directory not found: $packageDir"
-      }
+          if (-not (Test-Path $packageDir)) {
+            throw "Package directory not found: $packageDir"
+          }
 
-      if (Test-Path $zipPath) {
-        Remove-Item $zipPath -Force
-      }
+          if (Test-Path $zipPath) {
+            Remove-Item $zipPath -Force
+          }
 
-      Compress-Archive `
-        -Path "$packageDir\*" `
-        -DestinationPath $zipPath `
-        -Force
+          Compress-Archive `
+            -Path "$packageDir\*" `
+            -DestinationPath $zipPath `
+            -Force
 
-      Get-Item $zipPath | Format-Table Name, Length
+          Get-Item $zipPath | Format-Table Name, Length
 
       - name: Upload package artifact
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
