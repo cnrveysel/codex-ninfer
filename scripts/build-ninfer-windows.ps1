@@ -36,6 +36,8 @@ if ($env:PROCESSOR_ARCHITECTURE -ne "AMD64") {
 }
 
 $target = "x86_64-pc-windows-msvc"
+$targetDir = Join-Path $codexRs "target"
+$binDir = Join-Path (Join-Path $targetDir $target) $Profile
 
 if (-not $NoBuild) {
     # The toolchain is pinned in codex-rs/rust-toolchain.toml; rustup uses it.
@@ -45,7 +47,7 @@ if (-not $NoBuild) {
     }
 
     Write-Host "==> Building binaries ($Profile, $target). This can take a while."
-    $env:CARGO_TARGET_DIR = Join-Path $repoRoot "codex-rs/target"
+    $env:CARGO_TARGET_DIR = $targetDir
     Push-Location $codexRs
     try {
         & cargo build --target $target --profile $Profile `
