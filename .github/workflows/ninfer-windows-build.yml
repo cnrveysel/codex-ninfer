@@ -1,0 +1,77 @@
+name: ninfer-windows-build
+
+# Fork-only workflow: builds the Codex NInfer Windows package (main binary +
+# Windows sandbox helpers) and uploads it as an action artifact.
+# Upstream release workflows are untouched.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - flatten-mcp-tools-for-non-namespace-providers
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build-ninfer-windows:
+    name: Build Codex NInfer Windows package (${{ matrix.target }})
+    runs-on: windows-latest
+    timeout-minutes: 300
+    defaults:
+      run:
+        shell: powershell
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-pc-windows-msvc
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        with:
+          target: ${{ matrix.target }}
+
+      - name: Build Windows package
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          .\scripts\build-ninfer-windows.ps1 -Profile release
+
+      - name: Show package contents
+        shell: powershell
+        run: |
+          Get-ChildItem "dist\codex-ninfer-windows-x64" | Format-Table Name, Length
+
+      - name: Create ZIP archive
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $packageDir = "dist\codex-ninfer-windows-x64"
+          $zipPath = "dist\codex-ninfer-windows-x64.zip"
+          if (Test-Path $zipPath) { Remove-Item $zipPath }
+          # Zip from inside the package dir so the archive has a flat layout.
+          Push-Location $packageDir
+          try {
+            Compress-Archive -Path * -DestinationPath $zipPath
+          }
+          finally {
+            Pop-Location
+          }
+          Get-Item $zipPath | Format-Table Name, Length
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: codex-ninfer-windows-x64
+          path: dist/codex-ninfer-windows-x64.zip
+          if-no-files-found: error

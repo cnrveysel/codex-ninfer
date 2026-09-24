@@ -58,6 +58,33 @@ Build all three from this workspace and place them in one folder; Codex's
 `arg0` layer prepends that folder to `PATH` and creates the `apply_patch.exe`
 alias (hard link, copy as fallback) there at startup.
 
+
+### Build Windows package
+
+After cloning the repository, build the three-binary Windows package
+from the repository root with a single command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build-ninfer-windows.ps1
+```
+
+The script builds `codex` (with the forked 32 MiB Windows main-stack
+linker fix applied automatically) plus the two sandbox helper
+executables, then stages them in:
+
+```
+dist/codex-ninfer-windows-x64/
+    codex-ninfer.exe
+    codex-windows-sandbox-setup.exe
+    codex-command-runner.exe
+    README.txt
+```
+
+Keep all three `.exe` files in the same folder. Optional parameters:
+`-Profile debug`, `-OutDir <path>`, `-NoBuild` (stage only). On
+GitHub, the `ninfer-windows-build` workflow produces the same package
+as the `codex-ninfer-windows-x64` build artifact.
+
 ## Configuration
 
 Set `CODEX_HOME` to a dedicated profile directory, e.g.:
