@@ -56,15 +56,23 @@ To remove the installation, double-click `Uninstall.cmd`.
 
 Notes:
 
-- The installer sets the `CODEX_HOME` user environment variable to
-  `%USERPROFILE%\.codex-ninfer`, so a plain `codex-ninfer` launch uses
-  the NInfer profile. Open a new terminal after installing.
-- The generated profile uses `web_search = "disabled"`, because NInfer
-  does not provide a native `web_search` executor. Tools the fork
-  supports, such as MCP tools, shell, and `apply_patch`, are not
-  affected.
-
-
+- The installer sets the `CODEX_HOME` user environment variable to the
+  default profile `%USERPROFILE%\.codex-ninfer`, so a plain
+  `codex-ninfer` launch uses the NInfer profile. Open a new terminal
+  after installing.
+- The generated config enables Qwen3.8-27B with `medium` reasoning
+  (`model_reasoning_effort = "medium"`), a 262144-token context window
+  and auto-compact at 200000 tokens, uses the NInfer provider without
+  OpenAI auth, and sets `web_search = "disabled"` because NInfer does
+  not provide a native `web_search` executor. Tools the fork supports,
+  such as MCP tools, shell, and `apply_patch`, are not affected.
+- MCP integrations are optional and are not installed automatically.
+  Users can add their own MCP servers to the Codex NInfer config.
+- To uninstall, double-click `Uninstall.cmd`. Removing the profile is
+  optional (default: keep it). Running Codex processes can lock some
+  profile temp files; in that case the uninstaller reports the files it
+  could not remove and continues with the rest of the cleanup — close
+  Codex and run Uninstall.cmd again to remove them.
 
 ## Building on Windows
 
