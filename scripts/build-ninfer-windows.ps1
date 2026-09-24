@@ -1,4 +1,4 @@
-# Builds the Codex NInfer Windows package into dist/codex-ninfer-windows-x64.
+﻿# Builds the Codex NInfer Windows package into dist/codex-ninfer-windows-x64.
 #
 # Usage (from the repository root):
 #   powershell -ExecutionPolicy Bypass -File .\scripts\build-ninfer-windows.ps1
@@ -67,7 +67,7 @@ if (-not $NoBuild) {
 #     codex-windows-sandbox-setup.exe
 #     codex-command-runner.exe
 #     README.txt
-$binDir = Join-Path $repoRoot "codex-rs/target/$target/$Profile"
+#     Install.cmd / Uninstall.cmd    easy installer (no toolchain needed)
 $expectedBinaries = [ordered]@{
     "codex-ninfer.exe"                = (Join-Path $binDir "codex.exe")
     "codex-windows-sandbox-setup.exe" = (Join-Path $binDir "codex-windows-sandbox-setup.exe")
@@ -98,9 +98,9 @@ $readmeLines = @(
     "  codex-windows-sandbox-setup.exe  Windows sandbox helper",
     "  codex-command-runner.exe         sandboxed command runner",
     "  README.txt                       this file",
-    "",
-    "QUICK START",
-    "  1. Point CODEX_HOME at a dedicated profile directory (any path works):",
+    "  Install.cmd                      double-click to install (no Rust",
+    "                                   Visual Studio or admin rights needed)",
+    "  Uninstall.cmd                    double-click to uninstall",
     "     set CODEX_HOME=%USERPROFILE%\.codex-ninfer",
     "     mkdir %CODEX_HOME%",
     "",
@@ -122,6 +122,19 @@ $readmeLines = @(
     "  - No API key is required for a LAN NInfer endpoint.",
     ""
 )
+
+# Also stage the installer files so the release ZIP can be installed
+# by double-clicking Install.cmd (no Rust/toolchain needed on the user side).
+$installerFiles = @("Install.cmd", "install-ninfer.ps1", "Uninstall.cmd")
+foreach ($file in $installerFiles) {
+    $src = Join-Path $repoRoot (Join-Path "scripts" (Join-Path "installer" $file))
+    if (-not (Test-Path $src)) {
+        Write-Warning "Installer file missing, skipping: $src"
+    } else {
+        Copy-Item $src (Join-Path $OutDir $file)
+    }
+}
+
 Set-Content -Path (Join-Path $OutDir "README.txt") -Value $readmeLines -Encoding ascii
 
 Write-Host ""

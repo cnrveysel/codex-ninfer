@@ -35,6 +35,26 @@ Windows, including the Windows sandbox helpers and the `apply_patch` tool.
 The LM Studio build (`codex-lmstudio-v1.exe`) is a *separate* binary and is
 not affected by these changes.
 
+## Easy Windows install
+
+For non-technical users, the GitHub Releases ZIP can be installed with
+a double click — no Rust, Cargo, Git, or Visual Studio Build Tools
+required:
+
+1. Download the Windows ZIP from GitHub Releases.
+2. Extract it to any folder (e.g. your Downloads folder).
+3. Double-click `Install.cmd` inside the extracted folder.
+4. Accept the default NInfer address (or type your NInfer host).
+5. Open a new terminal.
+6. Run `codex-ninfer`.
+
+The installer copies the three executables to
+`%LOCALAPPDATA%\CodexNInfer\bin`, writes a starter config to
+`%USERPROFILE%\.codex-ninfer`, and (on request) adds the install
+folder to your user PATH. No administrator rights are needed.
+To remove the installation, double-click `Uninstall.cmd`.
+
+
 ## Building on Windows
 
 Prerequisites: Rust stable (MSVC toolchain) and the Windows SDK. The

@@ -1,0 +1,195 @@
+﻿# Codex NInfer Windows installer / uninstaller.
+#
+# Install mode (default):
+#   Copies the three Codex NInfer executables (which must sit next to this
+#   script in the release ZIP) to %LOCALAPPDATA%\CodexNInfer\bin, writes a
+#   starter CODEX_HOME config, and optionally adds the install folder to
+#   the user PATH. No administrator rights, Rust, Cargo, or Visual Studio
+#   are required.
+#
+# Uninstall mode:
+#   & install-ninfer.ps1 -Uninstall
+#   Removes the installed binaries and (on request) the user PATH entry
+#   and the %USERPROFILE%\.codex-ninfer profile.
+
+[CmdletBinding()]
+param(
+    [switch]$Uninstall
+)
+
+$ErrorActionPreference = "Stop"
+$host.UI.RawUI.WindowTitle = "Codex NInfer Installer"
+
+$packageDir = $PSScriptRoot
+$installRoot = Join-Path $env:LOCALAPPDATA "CodexNInfer"
+$installDir = Join-Path $installRoot "bin"
+$codeHome = Join-Path $env:USERPROFILE ".codex-ninfer"
+$defaultEndpoint = "http://127.0.0.1:8080/v1"
+$binaries = @("codex-ninfer.exe", "codex-windows-sandbox-setup.exe", "codex-command-runner.exe")
+
+function Write-Step([string]$text) {
+    Write-Host ""
+    Write-Host $text -ForegroundColor Cyan
+}
+
+function Remove-InstallDir([string]$path) {
+    if (Test-Path $path) {
+        Remove-Item -Recurse -Force $path
+        Write-Host "  Removed $path"
+    } else {
+        Write-Host "  Nothing to remove at $path"
+    }
+}
+
+function Remove-PathEntry([string]$folder) {
+    $current = [Environment]::GetEnvironmentVariable("Path", "User")
+    if (-not $current) {
+        Write-Host "  User PATH is empty; nothing to remove."
+        return
+    }
+    $parts = @($current -split ';' | Where-Object { $_ })
+    $keep = @($parts | Where-Object { $_.TrimEnd('\') -ne $folder })
+    if ($keep.Count -lt $parts.Count) {
+        [Environment]::SetEnvironmentVariable("Path", ($keep -join ';'), "User")
+        Write-Host "  Removed the install folder from your user PATH."
+    } else {
+        Write-Host "  No PATH entry found; nothing to remove."
+    }
+}
+
+if ($Uninstall) {
+    Write-Host "==============================================="
+    Write-Host "         Codex NInfer Uninstaller"
+    Write-Host "==============================================="
+
+    Write-Step "[1/2] Removing installed binaries..."
+    Remove-InstallDir $installDir
+    $parent = Split-Path -Parent $installDir
+    if ((Test-Path $parent) -and -not (Get-ChildItem $parent -Force)) {
+        Remove-Item -Force $parent
+        Write-Host "  Removed empty folder $parent"
+    }
+
+    Write-Step "[2/2] Cleaning up PATH and (optionally) your profile..."
+    Remove-PathEntry $installDir
+
+    Write-Host ""
+    $answer = Read-Host "Also remove $codeHome (configuration and session data)? [y/N]"
+    if ($answer -match '^[yY]') {
+        Remove-InstallDir $codeHome
+    } else {
+        Write-Host "  Kept $codeHome (your configuration and session data are untouched)."
+    }
+
+    Write-Host ""
+    Write-Host "  Uninstall finished."
+    Write-Host "  Note: PATH changes apply to new terminal windows."
+    return
+}
+
+Write-Host "==============================================="
+Write-Host "        Codex NInfer Windows Installer"
+Write-Host "==============================================="
+
+# --- [1/4] Install binaries -----------------------------------------------
+Write-Step "[1/4] Installing binaries..."
+foreach ($binary in $binaries) {
+    $source = Join-Path $packageDir $binary
+    if (-not (Test-Path $source)) {
+        throw "Missing $binary in the release package. Extract the full ZIP and re-run Install.cmd."
+    }
+}
+New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+foreach ($binary in $binaries) {
+    Copy-Item (Join-Path $packageDir $binary) (Join-Path $installDir $binary) -Force
+    Write-Host "  $binary"
+}
+Write-Host "  All three binaries are installed in the same folder: $installDir"
+
+# --- [2/4] Configure CODEX_HOME --------------------------------------------
+Write-Step "[2/4] Configuring CODEX_HOME..."
+Write-Host "  Default location: $codeHome (press Enter to accept)"
+$codeHomeInput = Read-Host "  CODEX_HOME"
+if (-not $codeHomeInput) { $codeHomeInput = $codeHome }
+$codeHome = $codeHomeInput.Trim()
+New-Item -ItemType Directory -Force -Path $codeHome | Out-Null
+$configPath = Join-Path $codeHome "config.toml"
+
+# --- [3/4] Configure NInfer -------------------------------------------------
+Write-Step "[3/4] Configuring NInfer..."
+Write-Host "  Default endpoint: $defaultEndpoint (press Enter to accept)"
+$endpoint = Read-Host "  NInfer endpoint"
+if (-not $endpoint) { $endpoint = $defaultEndpoint }
+$endpoint = $endpoint.Trim()
+if ($endpoint -notmatch '^https?://') { $endpoint = "http://$endpoint" }
+
+$writeConfig = $true
+if (Test-Path $configPath) {
+    Write-Host "  Found existing config at $configPath"
+    $answer = Read-Host "  Overwrite it? [y/N]"
+    $writeConfig = ($answer -match '^[yY]')
+}
+
+if ($writeConfig) {
+    $configLines = @(
+        "# Codex NInfer configuration (generated by the installer)"
+        'model = "qwen3.8-27b"'
+        'model_provider = "ninfer"'
+        'reasoning_effort = "medium"   # none | low | medium | xhigh'
+        'approval_policy = "on-request"'
+        'sandbox_mode = "workspace-write"'
+        ""
+        "[model_providers.ninfer]"
+        'name = "NInfer"'
+        "base_url = `"$endpoint`""
+        'wire_api = "responses"'
+        ""
+        "# The 262144-token context window for qwen3.8-27b is applied"
+        "# automatically; no extra configuration is needed."
+    )
+    Set-Content -Path $configPath -Value $configLines -Encoding ascii
+    Write-Host "  Wrote $configPath"
+} else {
+    Write-Host "  Kept your existing config."
+}
+
+# --- [4/4] Finishing ---------------------------------------------------------
+Write-Step "[4/4] Finishing installation..."
+
+$existingUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+$pathParts = @()
+if ($existingUserPath) { $pathParts = $existingUserPath -split ';' | Where-Object { $_ } }
+$alreadyInPath = @($pathParts | Where-Object { $_.TrimEnd('\') -ieq $installDir })
+if ($alreadyInPath.Count -gt 0) {
+    Write-Host "  PATH already includes the install folder."
+} else {
+    $answer = Read-Host "Add Codex NInfer to your user PATH? [Y/n]"
+    if ($answer -notmatch '^[nN]') {
+        if ($existingUserPath) {
+            [Environment]::SetEnvironmentVariable("Path", ($existingUserPath.TrimEnd(';') + ";" + $installDir), "User")
+        } else {
+            [Environment]::SetEnvironmentVariable("Path", $installDir, "User")
+        }
+        Write-Host "  User PATH updated."
+    } else {
+        Write-Host "  PATH left unchanged."
+    }
+}
+
+Write-Host ""
+Write-Host "===============================================" -ForegroundColor Green
+Write-Host "  Installation complete!" -ForegroundColor Green
+Write-Host "==============================================="
+Write-Host ""
+Write-Host "  Binaries : $installDir"
+Write-Host "  Config   : $codeHome"
+Write-Host ""
+Write-Host "  Open a NEW terminal window, then run:"
+Write-Host ""
+Write-Host "      codex-ninfer"
+Write-Host ""
+Write-Host "  (PATH changes only apply to new terminal windows.)"
+Write-Host ""
+Write-Host "  To start Codex right now, run this instead:"
+Write-Host ""
+Write-Host "      $installDir\codex-ninfer.exe"
