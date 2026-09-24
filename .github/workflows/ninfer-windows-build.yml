@@ -8,11 +8,10 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - main
-      - flatten-mcp-tools-for-non-namespace-providers
+      - ninfer
   pull_request:
     branches:
-      - main
+      - ninfer
 
 permissions:
   contents: read
